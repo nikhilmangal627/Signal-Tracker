@@ -1,0 +1,901 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>SignalMap</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg: #0A0C10;
+  --surface: #13161E;
+  --surface2: #1C2030;
+  --border: rgba(255,255,255,0.07);
+  --text: #EEF0F6;
+  --muted: #5A6275;
+  --good: #22C55E;
+  --mid: #F59E0B;
+  --bad: #EF4444;
+  --airtel: #E8001D;
+  --voda: #E60000;
+  --jio: #1A6FBF;
+  --header: 54px;
+  --panel-peek: 230px;
+  --panel-full: 88vh;
+}
+
+html, body {
+  height: 100%; width: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+/* ── Header ── */
+header {
+  position: fixed; top: 0; left: 0; right: 0;
+  height: var(--header);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 16px;
+  z-index: 1000;
+}
+.logo { font-family: monospace; font-size: 15px; font-weight: 700; letter-spacing: 0.1em; }
+.logo em { color: var(--mid); font-style: normal; }
+
+.pill {
+  display: flex; align-items: center; gap: 7px;
+  padding: 6px 14px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  font-size: 12px; color: var(--muted);
+}
+.dot { flex-shrink: 0; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); transition: background .4s; }
+.dot.live { background: var(--good); animation: blink 2s infinite; }
+.dot.err  { background: var(--bad); }
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+/* ── Map ── */
+#map {
+  position: fixed;
+  top: var(--header); left: 0; right: 0; bottom: 0;
+  z-index: 1;
+}
+
+/* ── FAB toolbar (map buttons) ── */
+.fab-group {
+  position: fixed;
+  right: 14px;
+  bottom: calc(var(--panel-peek) + 14px);
+  display: flex; flex-direction: column; gap: 10px;
+  z-index: 600;
+  transition: bottom 0.4s cubic-bezier(.4,0,.2,1);
+}
+.fab-group.sheet-expanded {
+  bottom: calc(var(--panel-full) + 14px);
+}
+
+.fab {
+  width: 48px; height: 48px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: rgba(10,12,16,.92);
+  backdrop-filter: blur(16px);
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer;
+  font-size: 20px;
+  box-shadow: 0 4px 16px rgba(0,0,0,.4);
+  transition: background .2s, transform .15s;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+.fab:active { transform: scale(.92); background: var(--surface2); }
+.fab.active { background: rgba(239,68,68,.18); border-color: rgba(239,68,68,.4); }
+.fab.tower-active { background: rgba(245,158,11,.15); border-color: rgba(245,158,11,.35); }
+
+.fab-label {
+  position: absolute;
+  right: 56px;
+  background: rgba(10,12,16,.9);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 4px 10px;
+  font-size: 11px; color: var(--muted);
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0; transition: opacity .2s;
+}
+.fab:hover .fab-label { opacity: 1; }
+
+/* Toast */
+#toast {
+  position: fixed;
+  top: calc(var(--header) + 12px);
+  left: 50%; transform: translateX(-50%);
+  background: rgba(20,24,34,.95);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 9px 16px;
+  font-size: 12px; color: var(--text);
+  z-index: 2000; white-space: nowrap;
+  opacity: 0; transition: opacity .3s;
+  pointer-events: none;
+}
+#toast.show { opacity: 1; }
+
+/* ── Overlay ── */
+#overlay {
+  position: fixed; inset: 0;
+  background: var(--bg);
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  gap: 18px; z-index: 3000;
+  transition: opacity .5s;
+}
+#overlay.gone { opacity: 0; pointer-events: none; }
+.spinner {
+  width: 40px; height: 40px;
+  border: 2.5px solid var(--border);
+  border-top-color: var(--mid);
+  border-radius: 50%;
+  animation: spin .8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+#overlay p { font-size: 13px; color: var(--muted); text-align: center; max-width: 260px; line-height: 1.7; }
+
+/* ── Error ── */
+#errBanner {
+  display: none;
+  position: fixed; top: calc(var(--header) + 12px);
+  left: 12px; right: 12px;
+  background: rgba(239,68,68,.13);
+  border: 1px solid rgba(239,68,68,.3);
+  border-radius: 12px;
+  padding: 12px 16px;
+  font-size: 13px; color: #FCA5A5;
+  z-index: 2000; text-align: center; line-height: 1.6;
+}
+
+/* ── Bottom Sheet ── */
+#sheet {
+  position: fixed;
+  left: 0; right: 0; bottom: 0;
+  height: var(--panel-full);
+  background: rgba(10,12,16,.97);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border-top: 1px solid var(--border);
+  border-radius: 20px 20px 0 0;
+  z-index: 500;
+  transform: translateY(calc(var(--panel-full) - var(--panel-peek)));
+  transition: transform 0.4s cubic-bezier(.4,0,.2,1);
+  display: flex; flex-direction: column;
+}
+#sheet.expanded { transform: translateY(0); }
+
+.handle-wrap {
+  flex-shrink: 0; height: 28px;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; touch-action: none;
+}
+.handle { width: 36px; height: 4px; border-radius: 2px; background: rgba(255,255,255,.18); }
+
+.sheet-inner {
+  flex: 1; overflow-y: auto; overflow-x: hidden;
+  padding: 0 14px 36px;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Preview row */
+.preview {
+  display: flex; align-items: center; gap: 10px;
+  padding: 0 2px 14px;
+}
+.preview-item { flex: 1; text-align: center; }
+.preview-name { font-size: 10px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; margin-bottom: 4px; }
+.preview-name.airtel { color: #FF4060; }
+.preview-name.voda   { color: #FF5555; }
+.preview-name.jio    { color: #4D9FE0; }
+.preview-pct { font-family: monospace; font-size: 28px; font-weight: 700; line-height: 1; transition: color .5s; }
+.preview-type { font-size: 10px; color: var(--muted); margin-top: 3px; letter-spacing: .06em; }
+.preview-div { width: 1px; height: 48px; background: var(--border); }
+
+.sec-label {
+  font-size: 10px; letter-spacing: .12em;
+  text-transform: uppercase; color: var(--muted);
+  font-family: monospace; margin: 4px 0 10px;
+}
+
+/* Cards */
+.cards { display: flex; flex-direction: column; gap: 10px; }
+.card {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 14px 16px;
+  position: relative; overflow: hidden;
+  display: flex; align-items: center; gap: 14px;
+}
+.card::before {
+  content: ''; position: absolute;
+  left: 0; top: 0; bottom: 0; width: 3px;
+}
+.card.airtel::before { background: var(--airtel); }
+.card.voda::before   { background: var(--voda); }
+.card.jio::before    { background: var(--jio); }
+
+.card-left { flex: 1; min-width: 0; }
+.card-name {
+  font-size: 13px; font-weight: 700;
+  letter-spacing: .06em; text-transform: uppercase; margin-bottom: 10px;
+}
+.card.airtel .card-name { color: #FF4060; }
+.card.voda   .card-name { color: #FF5555; }
+.card.jio    .card-name { color: #4D9FE0; }
+
+.bars { display: flex; align-items: flex-end; gap: 4px; height: 26px; margin-bottom: 8px; }
+.bar { flex: 1; border-radius: 2px; background: rgba(255,255,255,.08); transition: background .6s; }
+.bar:nth-child(1) { height: 28%; }
+.bar:nth-child(2) { height: 46%; }
+.bar:nth-child(3) { height: 64%; }
+.bar:nth-child(4) { height: 82%; }
+.bar:nth-child(5) { height: 100%; }
+.bar.on.airtel { background: var(--airtel); }
+.bar.on.voda   { background: var(--voda); }
+.bar.on.jio    { background: var(--jio); }
+
+.card-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ntype {
+  padding: 3px 9px; border-radius: 5px;
+  font-size: 11px; font-weight: 700; letter-spacing: .06em;
+  background: rgba(255,255,255,.07); color: var(--muted);
+}
+.best-tag {
+  padding: 3px 9px; border-radius: 5px;
+  font-size: 11px; font-weight: 700; letter-spacing: .06em;
+  background: rgba(34,197,94,.15); color: var(--good);
+}
+
+/* Tower compass widget inside card */
+.tower-widget {
+  display: none;
+  align-items: center; gap: 8px;
+  margin-top: 10px; padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.tower-widget.visible { display: flex; }
+.compass-ring {
+  position: relative;
+  width: 40px; height: 40px; flex-shrink: 0;
+}
+.compass-ring svg { width: 100%; height: 100%; }
+.tower-info { font-size: 11px; color: var(--muted); line-height: 1.6; }
+.tower-info strong { color: var(--text); font-size: 12px; }
+
+.card-right { text-align: right; flex-shrink: 0; }
+.big-pct { font-family: monospace; font-size: 34px; font-weight: 700; line-height: 1; transition: color .5s; }
+.pct-label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; margin-top: 2px; }
+
+/* Dead zone legend */
+.legend {
+  margin-top: 14px; padding: 12px 14px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+.legend-title { font-size: 11px; font-weight: 600; color: var(--muted); margin-bottom: 8px; text-transform: uppercase; letter-spacing: .08em; }
+.legend-row { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); margin-bottom: 5px; }
+.legend-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+#dzCount { font-size: 11px; color: var(--muted); margin-top: 6px; }
+#clearDz {
+  margin-top: 8px; width: 100%;
+  padding: 8px; border-radius: 8px;
+  background: rgba(239,68,68,.1);
+  border: 1px solid rgba(239,68,68,.25);
+  color: #FCA5A5; font-size: 12px; cursor: pointer;
+  transition: background .2s;
+}
+#clearDz:active { background: rgba(239,68,68,.2); }
+
+/* Coords */
+.coords-row {
+  margin-top: 14px; padding-top: 12px;
+  border-top: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+}
+.coords-text { font-family: monospace; font-size: 11px; color: var(--muted); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.acc-badge { flex-shrink: 0; font-family: monospace; font-size: 11px; padding: 3px 9px; border-radius: 5px; background: var(--surface2); color: var(--muted); }
+
+#clock { text-align: center; font-family: monospace; font-size: 11px; color: var(--muted); padding: 8px 0 0; }
+
+/* Desktop */
+@media (min-width: 700px) {
+  #sheet {
+    position: fixed;
+    top: var(--header); bottom: 0;
+    left: auto; right: 0;
+    width: 340px; height: auto;
+    border-radius: 0;
+    border-top: none;
+    border-left: 1px solid var(--border);
+    transform: none !important;
+  }
+  #map { right: 340px; bottom: 0; }
+  .handle-wrap { display: none; }
+  .preview { display: none; }
+  .fab-group { bottom: 20px !important; right: 360px; }
+  .sec-label { margin-top: 8px; }
+}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">SIGNAL<em>MAP</em></div>
+  <div class="pill">
+    <div class="dot" id="dot"></div>
+    <span id="statusTxt">Requesting GPS…</span>
+  </div>
+</header>
+
+<div id="overlay">
+  <div class="spinner"></div>
+  <p>Waiting for location permission.<br>Tap <strong style="color:var(--text)">Allow</strong> when your browser asks.</p>
+</div>
+
+<div id="errBanner"></div>
+<div id="toast"></div>
+<div id="map"></div>
+
+<!-- FAB buttons -->
+<div class="fab-group" id="fabGroup">
+  <!-- Dead zone marker -->
+  <div class="fab" id="fabDz" title="Mark dead zone" onclick="markDeadZone()">
+    <span class="fab-label">Mark dead zone</span>
+    📵
+  </div>
+  <!-- Tower toggle -->
+  <div class="fab" id="fabTower" title="Toggle tower indicators" onclick="toggleTowers()">
+    <span class="fab-label">Tower direction</span>
+    📡
+  </div>
+</div>
+
+<!-- Bottom Sheet -->
+<div id="sheet">
+  <div class="handle-wrap" id="handleWrap">
+    <div class="handle"></div>
+  </div>
+
+  <div class="sheet-inner">
+    <!-- Collapsed preview -->
+    <div class="preview">
+      <div class="preview-item">
+        <div class="preview-name airtel">Airtel</div>
+        <div class="preview-pct" id="prev-airtel">—</div>
+        <div class="preview-type" id="prevt-airtel">—</div>
+      </div>
+      <div class="preview-div"></div>
+      <div class="preview-item">
+        <div class="preview-name voda">Vodafone</div>
+        <div class="preview-pct" id="prev-voda">—</div>
+        <div class="preview-type" id="prevt-voda">—</div>
+      </div>
+      <div class="preview-div"></div>
+      <div class="preview-item">
+        <div class="preview-name jio">Jio</div>
+        <div class="preview-pct" id="prev-jio">—</div>
+        <div class="preview-type" id="prevt-jio">—</div>
+      </div>
+    </div>
+
+    <div class="sec-label">Signal Details</div>
+
+    <div class="cards">
+      <!-- Airtel -->
+      <div class="card airtel" id="card-airtel">
+        <div class="card-left">
+          <div class="card-name">Airtel</div>
+          <div class="bars" id="bars-airtel">
+            <div class="bar"></div><div class="bar"></div>
+            <div class="bar"></div><div class="bar"></div><div class="bar"></div>
+          </div>
+          <div class="card-meta">
+            <div class="ntype" id="type-airtel">—</div>
+          </div>
+          <div class="tower-widget" id="tw-airtel">
+            <div class="compass-ring">
+              <svg viewBox="0 0 40 40" id="compass-airtel">
+                <circle cx="20" cy="20" r="18" fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="1.5"/>
+                <text x="20" y="7" text-anchor="middle" fill="rgba(255,255,255,0.25)" font-size="5">N</text>
+                <text x="20" y="37" text-anchor="middle" fill="rgba(255,255,255,0.25)" font-size="5">S</text>
+                <text x="5" y="22" text-anchor="middle" fill="rgba(255,255,255,0.25)" font-size="5">W</text>
+                <text x="35" y="22" text-anchor="middle" fill="rgba(255,255,255,0.25)" font-size="5">E</text>
+                <line id="needle-airtel" x1="20" y1="20" x2="20" y2="6" stroke="#E8001D" stroke-width="2" stroke-linecap="round"/>
+                <circle cx="20" cy="20" r="2" fill="#E8001D"/>
+              </svg>
+            </div>
+            <div class="tower-info">
+              <strong id="td-airtel">—°</strong> &nbsp;·&nbsp; <span id="tdist-airtel">—</span><br>
+              <span>Estimated tower</span>
+            </div>
+          </div>
+        </div>
+        <div class="card-right">
+          <div class="big-pct" id="pct-airtel">—</div>
+          <div class="pct-label">Signal</div>
+        </div>
+      </div>
+
+      <!-- Vodafone -->
+      <div class="card voda" id="card-voda">
+        <div class="card-left">
+          <div class="card-name">Vodafone</div>
+          <div class="bars" id="bars-voda">
+            <div class="bar"></div><div class="bar"></div>
+            <div class="bar"></div><div class="bar"></div><div class="bar"></div>
+          </div>
+          <div class="card-meta">
+            <div class="ntype" id="type-voda">—</div>
+          </div>
+          <div class="tower-widget" id="tw-voda">
+            <div class="compass-ring">
+              <svg viewBox="0 0 40 40" id="compass-voda">
+                <circle cx="20" cy="20" r="18" fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="1.5"/>
+                <text x="20" y="7" text-anchor="middle" fill="rgba(255,255,255,0.25)" font-size="5">N</text>
+                <text x="20" y="37" text-anchor="middle" fill="rgba(255,255,255,0.25)" font-size="5">S</text>
+                <text x="5" y="22" text-anchor="middle" fill="rgba(255,255,255,0.25)" font-size="5">W</text>
+                <text x="35" y="22" text-anchor="middle" fill="rgba(255,255,255,0.25)" font-size="5">E</text>
+                <line id="needle-voda" x1="20" y1="20" x2="20" y2="6" stroke="#E60000" stroke-width="2" stroke-linecap="round"/>
+                <circle cx="20" cy="20" r="2" fill="#E60000"/>
+              </svg>
+            </div>
+            <div class="tower-info">
+              <strong id="td-voda">—°</strong> &nbsp;·&nbsp; <span id="tdist-voda">—</span><br>
+              <span>Estimated tower</span>
+            </div>
+          </div>
+        </div>
+        <div class="card-right">
+          <div class="big-pct" id="pct-voda">—</div>
+          <div class="pct-label">Signal</div>
+        </div>
+      </div>
+
+      <!-- Jio -->
+      <div class="card jio" id="card-jio">
+        <div class="card-left">
+          <div class="card-name">Jio</div>
+          <div class="bars" id="bars-jio">
+            <div class="bar"></div><div class="bar"></div>
+            <div class="bar"></div><div class="bar"></div><div class="bar"></div>
+          </div>
+          <div class="card-meta">
+            <div class="ntype" id="type-jio">—</div>
+          </div>
+          <div class="tower-widget" id="tw-jio">
+            <div class="compass-ring">
+              <svg viewBox="0 0 40 40" id="compass-jio">
+                <circle cx="20" cy="20" r="18" fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="1.5"/>
+                <text x="20" y="7" text-anchor="middle" fill="rgba(255,255,255,0.25)" font-size="5">N</text>
+                <text x="20" y="37" text-anchor="middle" fill="rgba(255,255,255,0.25)" font-size="5">S</text>
+                <text x="5" y="22" text-anchor="middle" fill="rgba(255,255,255,0.25)" font-size="5">W</text>
+                <text x="35" y="22" text-anchor="middle" fill="rgba(255,255,255,0.25)" font-size="5">E</text>
+                <line id="needle-jio" x1="20" y1="20" x2="20" y2="6" stroke="#1A6FBF" stroke-width="2" stroke-linecap="round"/>
+                <circle cx="20" cy="20" r="2" fill="#1A6FBF"/>
+              </svg>
+            </div>
+            <div class="tower-info">
+              <strong id="td-jio">—°</strong> &nbsp;·&nbsp; <span id="tdist-jio">—</span><br>
+              <span>Estimated tower</span>
+            </div>
+          </div>
+        </div>
+        <div class="card-right">
+          <div class="big-pct" id="pct-jio">—</div>
+          <div class="pct-label">Signal</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Dead zone legend -->
+    <div class="legend">
+      <div class="legend-title">Dead Zone Legend</div>
+      <div class="legend-row"><div class="legend-dot" style="background:#EF4444"></div> No signal (0–20%)</div>
+      <div class="legend-row"><div class="legend-dot" style="background:#F59E0B"></div> Weak signal (21–40%)</div>
+      <div class="legend-row"><div class="legend-dot" style="background:#22C55E"></div> Manually dropped pin</div>
+      <div id="dzCount">No dead zones marked yet</div>
+      <button id="clearDz" onclick="clearDeadZones()">🗑 Clear all dead zone markers</button>
+    </div>
+
+    <div class="coords-row">
+      <div class="coords-text" id="coordsTxt">GPS not yet acquired</div>
+      <div class="acc-badge" id="accTxt">Acc: —</div>
+    </div>
+    <div id="clock">—</div>
+  </div>
+</div>
+
+<script>
+// ── Sheet toggle ───────────────────────────────────────────────
+const sheet   = document.getElementById('sheet');
+const fabGroup = document.getElementById('fabGroup');
+let expanded = false;
+
+function toggleSheet() {
+  expanded = !expanded;
+  sheet.classList.toggle('expanded', expanded);
+  fabGroup.classList.toggle('sheet-expanded', expanded);
+  if (window.innerWidth < 700 && map) setTimeout(() => map.invalidateSize(), 420);
+}
+document.getElementById('handleWrap').addEventListener('click', toggleSheet);
+
+let touchStartY = 0;
+document.getElementById('handleWrap').addEventListener('touchstart', e => { touchStartY = e.touches[0].clientY; }, { passive: true });
+document.getElementById('handleWrap').addEventListener('touchend', e => {
+  const dy = touchStartY - e.changedTouches[0].clientY;
+  if (Math.abs(dy) > 30) { if (dy > 0 && !expanded) toggleSheet(); if (dy < 0 && expanded) toggleSheet(); }
+}, { passive: true });
+
+// ── Map ───────────────────────────────────────────────────────
+let map, userMarker, userCircle;
+
+function initMap(lat, lng) {
+  map = L.map('map', { zoomControl: true }).setView([lat, lng], 16);
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    attribution: '© OpenStreetMap · © CARTO', maxZoom: 19
+  }).addTo(map);
+
+  const icon = L.divIcon({
+    className: '',
+    html: `<div style="width:16px;height:16px;background:#F59E0B;border:3px solid #fff;border-radius:50%;box-shadow:0 0 0 5px rgba(245,158,11,.25);"></div>`,
+    iconSize: [16,16], iconAnchor: [8,8]
+  });
+  userMarker = L.marker([lat,lng], { icon }).addTo(map);
+  userCircle = L.circle([lat,lng], { radius: 20, color: '#F59E0B', fillOpacity: 0.07, weight: 1 }).addTo(map);
+}
+
+function updateMap(lat, lng, acc) {
+  if (!map) { initMap(lat,lng); return; }
+  userMarker.setLatLng([lat,lng]);
+  userCircle.setLatLng([lat,lng]).setRadius(Math.max(acc||20,10));
+  map.panTo([lat,lng], { animate: true, duration: 0.7 });
+}
+
+// ── Toast ─────────────────────────────────────────────────────
+let toastTimer;
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 2800);
+}
+
+// ── Dead Zones ────────────────────────────────────────────────
+let deadZones = [];   // { lat, lng, worstPct, marker }
+let dzModeActive = false;
+
+function deadZoneColor(pct) {
+  if (pct <= 20) return '#EF4444';
+  if (pct <= 40) return '#F59E0B';
+  return '#22C55E'; // manual pin
+}
+
+function makeDzMarker(lat, lng, pct, label) {
+  const col = deadZoneColor(pct);
+  const html = `
+    <div style="
+      position:relative;
+      display:flex;flex-direction:column;align-items:center;
+    ">
+      <div style="
+        width:36px;height:36px;border-radius:50% 50% 50% 0;
+        transform:rotate(-45deg);
+        background:${col};
+        border:2px solid rgba(255,255,255,0.7);
+        box-shadow:0 2px 10px rgba(0,0,0,.5);
+        display:flex;align-items:center;justify-content:center;
+      ">
+        <span style="transform:rotate(45deg);font-size:14px;">📵</span>
+      </div>
+      <div style="
+        margin-top:2px;
+        background:rgba(10,12,16,.85);
+        border:1px solid rgba(255,255,255,.12);
+        border-radius:6px;
+        padding:2px 6px;
+        font-size:10px;font-weight:700;
+        color:${col};white-space:nowrap;
+        font-family:monospace;
+      ">${label}</div>
+    </div>`;
+
+  return L.marker([lat,lng], {
+    icon: L.divIcon({ className: '', html, iconSize: [36,52], iconAnchor: [18,50] })
+  });
+}
+
+function markDeadZone() {
+  if (!currentLat) { showToast('⚠ Waiting for GPS fix…'); return; }
+
+  // Worst signal across all carriers
+  const worst = Math.min(...CARRIERS.map(c => lastSigs[c.id]?.pct ?? 100));
+  const label = worst <= 40 ? worst + '% signal' : 'Manual pin';
+
+  const m = makeDzMarker(currentLat, currentLng, worst, label);
+  m.addTo(map);
+
+  const dz = { lat: currentLat, lng: currentLng, pct: worst, label, marker: m };
+  deadZones.push(dz);
+
+  // Popup on marker
+  m.bindPopup(`<b style="color:#EEF0F6">Dead Zone</b><br>
+    <span style="color:#9CA3AF;font-size:12px">Worst signal: ${worst}%</span><br>
+    <span style="color:#9CA3AF;font-size:11px">${currentLat.toFixed(5)}, ${currentLng.toFixed(5)}</span>`,
+    { className: 'dz-popup' });
+
+  updateDzCount();
+  showToast('📵 Dead zone marked!');
+}
+
+function clearDeadZones() {
+  deadZones.forEach(dz => { if (map) map.removeLayer(dz.marker); });
+  deadZones = [];
+  updateDzCount();
+  showToast('🗑 All markers cleared');
+}
+
+function updateDzCount() {
+  document.getElementById('dzCount').textContent =
+    deadZones.length === 0
+      ? 'No dead zones marked yet'
+      : `${deadZones.length} dead zone${deadZones.length > 1 ? 's' : ''} marked`;
+}
+
+// ── Tower Direction ───────────────────────────────────────────
+let towersVisible = false;
+let towerMapMarkers = [];
+
+// Deterministic fake tower positions near user (stable per carrier)
+function towerLatLng(carrier, lat, lng) {
+  const offsets = {
+    airtel:  { dlat:  0.008, dlng:  0.012 },
+    voda:    { dlat: -0.005, dlng:  0.018 },
+    jio:     { dlat:  0.011, dlng: -0.007 },
+  };
+  const o = offsets[carrier] || { dlat: 0.005, dlng: 0.005 };
+  // Vary slightly with location so it drifts as you move
+  const jitter = (Math.sin(lat * 500 + lng * 500) * 0.001);
+  return { lat: lat + o.dlat + jitter, lng: lng + o.dlng + jitter };
+}
+
+function bearingDeg(fromLat, fromLng, toLat, toLng) {
+  const φ1 = fromLat * Math.PI / 180;
+  const φ2 = toLat   * Math.PI / 180;
+  const Δλ = (toLng - fromLng) * Math.PI / 180;
+  const y = Math.sin(Δλ) * Math.cos(φ2);
+  const x = Math.cos(φ1) * Math.sin(φ2) - Math.sin(φ1) * Math.cos(φ2) * Math.cos(Δλ);
+  return ((Math.atan2(y, x) * 180 / Math.PI) + 360) % 360;
+}
+
+function haversineKm(lat1, lng1, lat2, lng2) {
+  const R = 6371;
+  const dLat = (lat2-lat1) * Math.PI/180;
+  const dLng = (lng2-lng1) * Math.PI/180;
+  const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLng/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+
+const TOWER_COLORS = { airtel: '#E8001D', voda: '#E60000', jio: '#1A6FBF' };
+const TOWER_LABELS = { airtel: 'Airtel', voda: 'Vodafone', jio: 'Jio' };
+
+function makeTowerMapMarker(lat, lng, carrierId) {
+  const col = TOWER_COLORS[carrierId];
+  const label = TOWER_LABELS[carrierId];
+  const html = `
+    <div style="display:flex;flex-direction:column;align-items:center;">
+      <div style="
+        width:28px;height:28px;border-radius:50%;
+        background:${col};
+        border:2px solid rgba(255,255,255,0.7);
+        box-shadow:0 0 0 4px ${col}33;
+        display:flex;align-items:center;justify-content:center;
+        font-size:13px;
+      ">📡</div>
+      <div style="
+        margin-top:2px;
+        background:rgba(10,12,16,.85);
+        border:1px solid rgba(255,255,255,.12);
+        border-radius:5px;
+        padding:2px 6px;
+        font-size:9px;font-weight:700;
+        color:${col};white-space:nowrap;font-family:monospace;
+      ">${label}</div>
+    </div>`;
+  return L.marker([lat,lng], {
+    icon: L.divIcon({ className: '', html, iconSize: [28,44], iconAnchor: [14,42] })
+  });
+}
+
+let towerLines = [];
+
+function showTowers(lat, lng) {
+  clearTowerLayer();
+  CARRIERS.forEach(c => {
+    const t = towerLatLng(c.id, lat, lng);
+    const m = makeTowerMapMarker(t.lat, t.lng, c.id);
+    m.addTo(map);
+    towerMapMarkers.push(m);
+
+    // Dashed line user → tower
+    const line = L.polyline([[lat,lng],[t.lat,t.lng]], {
+      color: TOWER_COLORS[c.id], weight: 1.5,
+      dashArray: '5,6', opacity: 0.55
+    }).addTo(map);
+    towerLines.push(line);
+  });
+}
+
+function clearTowerLayer() {
+  towerMapMarkers.forEach(m => map && map.removeLayer(m));
+  towerLines.forEach(l => map && map.removeLayer(l));
+  towerMapMarkers = [];
+  towerLines = [];
+}
+
+function toggleTowers() {
+  towersVisible = !towersVisible;
+  document.getElementById('fabTower').classList.toggle('tower-active', towersVisible);
+
+  CARRIERS.forEach(c => {
+    document.getElementById('tw-' + c.id).classList.toggle('visible', towersVisible);
+  });
+
+  if (!towersVisible) {
+    clearTowerLayer();
+    showToast('📡 Tower indicators off');
+  } else {
+    if (currentLat) showTowers(currentLat, currentLng);
+    showToast('📡 Tower direction on — estimates only');
+  }
+}
+
+function updateTowerCompass(lat, lng) {
+  CARRIERS.forEach(c => {
+    const t = towerLatLng(c.id, lat, lng);
+    const deg = bearingDeg(lat, lng, t.lat, t.lng);
+    const dist = haversineKm(lat, lng, t.lat, t.lng);
+    const distStr = dist < 1 ? Math.round(dist*1000) + ' m' : dist.toFixed(2) + ' km';
+
+    // Rotate needle
+    const rad = deg * Math.PI / 180;
+    const cx = 20, cy = 20, r = 14;
+    const nx = cx + r * Math.sin(rad);
+    const ny = cy - r * Math.cos(rad);
+    const needle = document.getElementById('needle-' + c.id);
+    if (needle) {
+      needle.setAttribute('x2', nx.toFixed(1));
+      needle.setAttribute('y2', ny.toFixed(1));
+    }
+
+    document.getElementById('td-' + c.id).textContent = Math.round(deg) + '°';
+    document.getElementById('tdist-' + c.id).textContent = distStr;
+  });
+}
+
+// ── Signal estimation ─────────────────────────────────────────
+function noise(x, y, s) {
+  const v = Math.sin(x * 127.1 + y * 311.7 + s * 74.3) * 43758.5453;
+  return v - Math.floor(v);
+}
+
+const CARRIERS = [
+  { id: 'airtel', bias: 0.73, seed: 1.0 },
+  { id: 'voda',   bias: 0.64, seed: 2.4 },
+  { id: 'jio',    bias: 0.71, seed: 3.9 },
+];
+
+let lastSigs = {};
+
+function estimate(c, lat, lng) {
+  const n1 = noise(lat*80, lng*80, c.seed);
+  const n2 = noise(lat*300, lng*300, c.seed+10) * 0.3;
+  const raw = Math.min(0.97, Math.max(0.04, c.bias + (n1+n2)*0.28 - 0.14));
+  return {
+    pct: Math.round(raw*100),
+    bars: Math.min(5, Math.max(1, Math.ceil(raw*5))),
+    type: raw>0.84?'5G':raw>0.60?'4G LTE':raw>0.36?'4G':raw>0.18?'3G':'2G',
+    raw
+  };
+}
+
+function sigColor(r) { return r>=0.65?'#22C55E':r>=0.38?'#F59E0B':'#EF4444'; }
+
+function render(lat, lng) {
+  let bestId=null, bestRaw=-1;
+  CARRIERS.forEach(c => {
+    lastSigs[c.id] = estimate(c, lat, lng);
+    if (lastSigs[c.id].raw > bestRaw) { bestRaw=lastSigs[c.id].raw; bestId=c.id; }
+  });
+
+  CARRIERS.forEach(c => {
+    const s = lastSigs[c.id];
+    const col = sigColor(s.raw);
+
+    document.getElementById('pct-'+c.id).textContent = s.pct+'%';
+    document.getElementById('pct-'+c.id).style.color = col;
+    document.getElementById('type-'+c.id).textContent = s.type;
+
+    document.querySelectorAll('#bars-'+c.id+' .bar').forEach((b,i) => {
+      b.className = 'bar'+(i<s.bars?' on '+c.id:'');
+    });
+
+    const card = document.getElementById('card-'+c.id);
+    const meta = card.querySelector('.card-meta');
+    const ex = meta.querySelector('.best-tag');
+    if (c.id===bestId) { if(!ex){const t=document.createElement('div');t.className='best-tag';t.textContent='Best';meta.appendChild(t);} }
+    else if(ex) ex.remove();
+
+    document.getElementById('prev-'+c.id).textContent = s.pct+'%';
+    document.getElementById('prev-'+c.id).style.color = col;
+    document.getElementById('prevt-'+c.id).textContent = s.type;
+  });
+
+  if (towersVisible) updateTowerCompass(lat, lng);
+
+  const now = new Date();
+  document.getElementById('clock').textContent =
+    'Updated ' + now.toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+}
+
+// ── Geolocation ───────────────────────────────────────────────
+let currentLat=null, currentLng=null, firstFix=true;
+
+function onPos(pos) {
+  const { latitude:lat, longitude:lng, accuracy:acc } = pos.coords;
+  currentLat=lat; currentLng=lng;
+
+  if (firstFix) {
+    firstFix=false;
+    document.getElementById('overlay').classList.add('gone');
+    document.getElementById('dot').classList.add('live');
+    document.getElementById('statusTxt').textContent='Live';
+  }
+
+  updateMap(lat,lng,acc);
+  render(lat,lng);
+  if (towersVisible) showTowers(lat,lng);
+
+  document.getElementById('coordsTxt').textContent = lat.toFixed(5)+'° N, '+Math.abs(lng).toFixed(5)+'° E';
+  document.getElementById('accTxt').textContent = '±'+Math.round(acc||0)+' m';
+}
+
+function onErr(e) {
+  document.getElementById('overlay').classList.add('gone');
+  document.getElementById('dot').classList.add('err');
+  document.getElementById('statusTxt').textContent='GPS error';
+  const msgs={1:'Location permission denied. Tap the lock icon in your browser address bar, set Location to Allow, then reload.',2:'Position unavailable. Ensure GPS is on.',3:'Location timed out. Please reload.'};
+  const b=document.getElementById('errBanner');
+  b.textContent='⚠ '+(msgs[e.code]||'Unknown error.');
+  b.style.display='block';
+  initMap(28.4089,77.3178);
+}
+
+if (!('geolocation' in navigator)) { onErr({code:2}); }
+else {
+  navigator.geolocation.watchPosition(onPos, onErr, {
+    enableHighAccuracy:true, maximumAge:2000, timeout:20000
+  });
+}
+</script>
+</body>
+</html>
